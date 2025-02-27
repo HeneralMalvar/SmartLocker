@@ -2,24 +2,23 @@
 #include <ESP8266WebServer.h>
 #include <ArduinoJson.h>
 #include <Adafruit_Fingerprint.h>
-#include <SoftwareSerial.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
 #include <SoftwareSerial.h>
 #include <LiquidCrystal_PCF8574.h>  // I2C LCD library
 #include <Adafruit_Fingerprint.h>
-#define SDA_PIN D2
-#define SCL_PIN D1
+#define SDA_PIN D5
+#define SCL_PIN D6
 #define RELAY_PIN D4
 #define RESET_BUTTON D3
 
 LiquidCrystal_PCF8574 lcd(0x27); 
  
-SoftwareSerial mySerial(D5, D6);  // RX, TX for R307
+SoftwareSerial mySerial(D1, D2);  // RX, TX for R307
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
 
-const char* ssid = "HUAWEI-2.4G-Y7Nw";
-const char* password = "9pJy9p53";
+const char* ssid = "leviwifi";
+const char* password = "levi121423";
 ESP8266WebServer server(80);
 
 void connectWiFi() {
@@ -53,7 +52,7 @@ void sendToFlask(String jsonData) {
     WiFiClient client;
     HTTPClient http;
     
-    String serverURL = "http://192.168.100.226:5000/fingerprint_response";  // Flask endpoint for responses
+    String serverURL = "http://192.168.1.42:5000/fingerprint_response";  // Flask endpoint for responses
     http.begin(client, serverURL);
     http.addHeader("Content-Type", "application/json");
 
@@ -74,7 +73,7 @@ void sendToServer(String jsonData) {
     WiFiClient client;
     HTTPClient http;
 
-    String serverURL = "http://192.168.100.226:5000/sync_fingerprints";  // Replace with your Flask server IP
+    String serverURL = "http://192.168.1.42:5000/sync_fingerprints";  // Replace with your Flask server IP
     http.begin(client, serverURL);
     http.addHeader("Content-Type", "application/json");
 
@@ -283,7 +282,7 @@ void handleCommand() {
             lcd.setCursor(0, 1);
             lcd.print(name);  // Print the name on the second line
 
-            digitalWrite(RELAY_PIN, LOW);
+            digitalWrite(RELAY_PIN, HIGH);
             
             // Turn on the backlight and the LED
             lcd.setBacklight(HIGH);
@@ -333,9 +332,24 @@ void setup() {
     Serial.begin(115200);
     mySerial.begin(57600);
     finger.begin(57600);
+    Serial.println("🔍 Waiting for sensor to initialize...");
+    delay(2000);  // Allow time for sensor startup
+
+    Serial.println("🔍 Checking stored fingerprints...");
+    if (finger.getTemplateCount() == FINGERPRINT_OK) {
+        Serial.printf("✔ Found %d stored fingerprints.\n", finger.templateCount);
+    } else {
+        Serial.println("❌ Failed to get fingerprint count!");
+    }
+    Serial.println("🔍 Testing Fingerprint Sensor...");
+    if (finger.verifyPassword()) {
+        Serial.println("✅ Fingerprint sensor detected!");
+    } else {
+        Serial.println("❌ Fingerprint sensor not responding! Check wiring.");
+    }
     Wire.begin(SDA_PIN,SCL_PIN);
     pinMode(RELAY_PIN, OUTPUT);
-    digitalWrite(RELAY_PIN, HIGH);
+    digitalWrite(RELAY_PIN, LOW);
     lcd.begin(16, 2);  // Initialize the LCD, specify the number of columns and rows
     lcd.setBacklight(LOW); // Turn off backlight initially
 
@@ -347,12 +361,6 @@ void setup() {
     server.on("/command", HTTP_POST, handleCommand);
     server.begin();
 
-    Serial.println("🔍 Checking stored fingerprints...");
-    if (finger.getTemplateCount() == FINGERPRINT_OK) {
-        Serial.printf("✔ Found %d stored fingerprints.\n", finger.templateCount);
-    } else {
-        Serial.println("❌ Failed to get fingerprint count!");
-    }
 }
 
 void loop() {
