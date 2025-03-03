@@ -14,7 +14,7 @@
 
 LiquidCrystal_PCF8574 lcd(0x27); 
  
-SoftwareSerial mySerial(D1, D2);  // RX, TX for R307
+SoftwareSerial mySerial(D2, D1);  // RX, TX for R307
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
 
 const char* ssid = "leviwifi";
