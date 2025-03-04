@@ -52,7 +52,7 @@ void sendToFlask(String jsonData) {
     WiFiClient client;
     HTTPClient http;
     
-    String serverURL = "http://192.168.1.42:5000/fingerprint_response";  // Flask endpoint for responses
+    String serverURL = "http://192.168.1.58:5000/fingerprint_response";  // Flask endpoint for responses
     http.begin(client, serverURL);
     http.addHeader("Content-Type", "application/json");
 
@@ -73,7 +73,7 @@ void sendToServer(String jsonData) {
     WiFiClient client;
     HTTPClient http;
 
-    String serverURL = "http://192.168.1.42:5000/sync_fingerprints";  // Replace with your Flask server IP
+    String serverURL = "http://192.168.1.58:5000/sync_fingerprints";  // Replace with your Flask server IP
     http.begin(client, serverURL);
     http.addHeader("Content-Type", "application/json");
 
@@ -126,7 +126,29 @@ void syncFingerprints() {
     response["message"] = "Fingerprints synchronized successfully!";
     sendResponse(response);
 }
+bool stopFlag = false;  // Global flag to stop operations
 
+void stopAllOperations() {
+    stopFlag = true;  // Set flag to stop ongoing loops
+
+    Serial.println("🛑 Stopping all pending operations...");
+
+    // Reset Fingerprint Sensor (if possible)
+    finger.getImage();  // Try to reset any ongoing fingerprint operation
+
+    // Clear LCD Display
+    lcd.clear();
+    lcd.setBacklight(LOW);
+
+    // Turn off relay
+    digitalWrite(RELAY_PIN, LOW);
+
+    // Turn off LED (assuming LED is used for access indication)
+    digitalWrite(LED_BUILTIN, HIGH);
+
+    // Reset flag after stopping operations
+    stopFlag = false;
+}
 void handleCommand() {
     if (server.hasArg("plain")) {
         DynamicJsonDocument doc(256);
@@ -221,6 +243,13 @@ void handleCommand() {
             sendResponse(response);
         }
 
+        else if (command =="stop_all"){
+          stopAllOperations();
+          response["message"] = "All operation stopped";
+          sendResponse(response);
+
+        }
+
         else if (command == "verify_fingerprint") {
             Serial.println("💡 Place your finger on the scanner for verification...");
             response["message"] = "Waiting for fingerprint verification...";
@@ -290,9 +319,9 @@ void handleCommand() {
             delay(5000);
             lcd.clear();
 
-            delay(2000); // Keep the message for 2 seconds
-            lcd.setBacklight(LOW); // Turn off backlight after delay
-            digitalWrite(LED_BUILTIN, HIGH); // Turn off LED
+            // delay(2000); // Keep the message for 2 seconds
+            // lcd.setBacklight(LOW); // Turn off backlight after delay
+            // digitalWrite(LED_BUILTIN, HIGH); // Turn off LED
         } 
         else if (command == "LCD_DISPLAY_ACCESS_DENIED") {
             Serial.println("ACCESS DENIED");
