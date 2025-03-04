@@ -1,4 +1,5 @@
 import os
+from asyncio import timeout
 from tkinter import *
 from PIL import Image, ImageTk
 import numpy as np
@@ -9,6 +10,8 @@ import threading
 import time
 import datetime
 import requests
+from flask import request
+
 from register import RegisterFace
 import cv2
 from testreg import RegisterFaces
@@ -54,15 +57,11 @@ class SmartLocker:
 
         # Layout
         Label(self.root, image=self.template_photo).place(x=0, y=0, width=1360, height=760)
-        Button(self.root, image=self.register_image, command=self.register_button).place(x=2, y=200, width=185,
-                                                                                         height=45)
-        Button(self.root, image=self.facerecognition_img, command=self.toggle_live_feed).place(x=2, y=250, width=185,
-                                                                                               height=45)
+        Button(self.root, image=self.register_image, command=self.register_button).place(x=2, y=200, width=185, height=45)
+        Button(self.root, image=self.facerecognition_img, command=self.toggle_live_feed).place(x=2, y=250, width=185, height=45)
         Button(self.root, image=self.database_img).place(x=2, y=300, width=185, height=45)
         self.recognize_name = StringVar()
-        Entry(self.root, justify="center", textvariable=self.recognize_name, state="readonly").place(x=260, y=300,
-                                                                                                     width=160,
-                                                                                                     height=30)
+        Entry(self.root, justify="center", textvariable=self.recognize_name, state="readonly").place(x=260, y=300, width=160, height=30)
 
         self.log_listbox = Listbox(self.root, font=("Arial", 12), bg="white", fg="black")
         self.log_listbox.place(x=900, y=185, width=400, height=200)
@@ -71,19 +70,25 @@ class SmartLocker:
         self.log_listbox.config(yscrollcommand=scrollbar_listbox.set)
         scrollbar_listbox.config(command=self.log_listbox.yview)
 
-        self.url = 'http://192.168.100.228/cam-hi.jpg'
-        self.ESP8266_IP = "192.168.100.229"
+        self.url = 'http://192.168.1.57/cam-hi.jpg'
+        self.ESP8266_IP = "192.168.1.53"
         self.ESP8266_PORT = 80
         self.ESP_URL = f"http://{self.ESP8266_IP}:{self.ESP8266_PORT}/command"
 
-        # Threading event for live feed control
+        # Threading events
         self.live_feed_event = threading.Event()
+        self.fingerprint_event = threading.Event()  # Controls fingerprint verification
+        self.fingerprint_thread_running = False
+        self.live_feed_thread_running = False
 
-        #Email configuration
+        # Email configuration
         self.sender_email = "smartlockerv5@gmail.com"
         self.sender_password = "wvkchsukbbweyiui"
         self.smtp_server = "smtp.gmail.com"
         self.smtp_port = 587
+
+        # Instance variable to store fingerprint result
+        self.idmo = None
 
     def send_email_notification(self, recipient_email, subject, body):
         """Send an email notification."""
@@ -92,33 +97,21 @@ class SmartLocker:
             msg['From'] = self.sender_email
             msg['To'] = recipient_email
             msg['Subject'] = subject
-
             msg.attach(MIMEText(body, 'plain'))
-
-            # Connect to the SMTP server
             server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            server.starttls()  # Enable security
+            server.starttls()
             server.login(self.sender_email, self.sender_password)
-
-            # Send the email
             server.send_message(msg)
             server.quit()
-
             self.log_list(f"Email notification sent to {recipient_email}")
         except Exception as e:
             self.log_list(f"Failed to send email: {e}")
 
     def send_command_to_esp(self, command):
         try:
-            # Construct the JSON payload
-            payload = {
-                "command": command
-            }
-
-            # Send a POST request with the 'application/json' content type
+            payload = {"command": command}
             headers = {"Content-Type": "application/json"}
             response = requests.post(self.ESP_URL, data=json.dumps(payload), headers=headers)
-
             if response.status_code == 200:
                 print(f"ESP8266 Response: {response.text}")
             else:
@@ -143,8 +136,7 @@ class SmartLocker:
             cursor.execute("SELECT name, face_encoding, email, contact, finger_id FROM registered_faces")
             encodings = [
                 (name, np.frombuffer(encoding, dtype=np.float64), email, contact)
-                for name, encoding, email, contact,finger_id in cursor.fetchall()]
-
+                for name, encoding, email, contact, finger_id in cursor.fetchall()]
             cursor.close()
             connection.close()
             return encodings
@@ -173,154 +165,164 @@ class SmartLocker:
     def register_button(self):
         RegisterFace(self)
 
+    def stop_all(self, fingerprint_id=None):
+        try:
+            data = {"command": "stop_all"}
+            if fingerprint_id:
+                data["fingerprint_id"] = fingerprint_id
+            response = requests.post("http://192.168.1.58:5000/send_command", json=data, timeout=10)
+            time.sleep(2)
+            if response.status_code == 200:
+                self.log_list("Stop all command sent successfully.")
+            else:
+                self.log_list(f"Failed to send stop_all command: {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            self.log_list(f"Error sending stop_all command: {e}")
+
     def verify_fingerprint(self, fingerprint_id=None):
         try:
-
-            # This will store the result from the ESP8266
-            idmo = None  # Initialize idmo as None to handle the case of no fingerprint
+            # Clear previous fingerprint result
+            self.idmo = None
 
             def request_thread():
-                nonlocal idmo
                 data = {"command": "verify_fingerprint"}
                 if fingerprint_id:
                     data["fingerprint_id"] = fingerprint_id
-
                 try:
-                    response = requests.post("http://192.168.100.226:5000/send_command", json=data, timeout=10)
+                    response = requests.post("http://192.168.1.58:5000/send_command", json=data, timeout=10)
                     for _ in range(10):  # Try for ~10 seconds
                         time.sleep(1)
-                        responses = requests.get("http://192.168.100.226:5000/get_responses").json()
-                        idmo = responses.get("last_fingerprint_id")  # Capture the fingerprint ID
-
-                        if idmo:
-                            break  # Exit loop if ID is found
-
+                        responses = requests.get("http://192.168.1.58:5000/get_responses").json()
+                        print(response)
+                        self.idmo = responses.get("last_fingerprint_id")
+                        if self.idmo:
+                            break
                 except requests.exceptions.RequestException as e:
                     self.log_list(f"Error: {e}")
 
-            # Start the request thread and wait for the result
             thread = threading.Thread(target=request_thread, daemon=True)
             thread.start()
-            thread.join()  # This ensures that the main thread waits until the request thread finishes
-
-            return idmo  # Return the fingerprint ID (idmo)
-
+            thread.join()  # Wait until thread completes
+            return self.idmo
         except Exception as e:
             self.log_list(f"Error during fingerprint verification: {e}")
             return None
 
     def start_live_feed(self):
-        max_retries = 5  # Maximum number of retries for fetching the image
-        retry_delay = 2  # Delay (in seconds) between retries
+        """Captures live camera feed and performs face recognition without freezing Tkinter."""
         encodings = self.load_from_db()
-
         if not self.check_url_availability(self.url):
             self.log_list("Error: Unable to connect to the camera feed.")
             return
 
         while self.live_feed_event.is_set():
-            frame = None
-            for attempt in range(max_retries):
-                try:
-                    # Attempt to fetch the image from the ESP camera
-                    img_response = urllib.request.urlopen(self.url, timeout=5)
-                    img_np_array = np.array(bytearray(img_response.read()), dtype=np.uint8)
-                    frame = cv2.imdecode(img_np_array, cv2.IMREAD_COLOR)
-                    break  # Exit retry loop if successful
-                except (urllib.request.URLError, socket.timeout) as e:
-                    self.log_list(f"Error fetching image (Attempt {attempt + 1}/{max_retries}): {e}")
-                    time.sleep(retry_delay)
+            try:
+                img_response = urllib.request.urlopen(self.url, timeout=5)
+                img_np_array = np.array(bytearray(img_response.read()), dtype=np.uint8)
+                frame = cv2.imdecode(img_np_array, cv2.IMREAD_COLOR)
+                if frame is None:
+                    self.log_list("Failed to fetch image. Retrying...")
+                    continue
 
-            if frame is None:
-                self.log_list("Failed to fetch image after multiple attempts. Check ESP module.")
-                continue  # Skip further processing and retry fetching image
+                frame_resized = cv2.resize(frame, (640, 480))
+                rgb_frame = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+                face_locations = face_recognition.face_locations(rgb_frame)
+                face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
 
-            # Process the frame for face recognition
-            frame_resized = cv2.resize(frame, (640, 480))
-            rgb_frame = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+                for face_encoding in face_encodings:
+                    matched_name = None
+                    for name, db_encoding, email, contact in encodings:
+                        face_distance = face_recognition.face_distance([db_encoding], face_encoding)
+                        if face_distance[0] < 0.4:
+                            matched_name = name
+                            recipient_email = email
+                            recipient_contact = contact
+                            break
 
-            # Detect faces in the frame
-            face_locations = face_recognition.face_locations(rgb_frame)
-            face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
-
-            for face_encoding in face_encodings:
-                matched_name = None
-                for name, db_encoding, email, contact in encodings:
-                    face_distance = face_recognition.face_distance([db_encoding], face_encoding)
-                    if face_distance[0] < 0.4:  # Match threshold
-                        matched_name = name
-                        recipient_email = email
-                        recipient_contact = contact
-                        break
-
-                if matched_name:
-                    self.log_list(f"Recognized: {matched_name}")
-                    self.send_command_to_esp("LED_ON")
-                    self.send_command_to_esp(f"LCD_DISPLAY_ACCESS_GRANTED:{matched_name}")
-                    self.recognize_name.set(matched_name)
-
-                    if recipient_email:
-                        # Send dynamic email notification
-                        subject = "Smart Locker Access Granted"
-                        body = (
-                            f"Access has been granted to {matched_name} on "
-                            f"{datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')}."
-                        )
-                        self.send_email_notification(recipient_email, subject, body)
-                        self.clear_values_and_restart()
-                        self.toggle_live_feed()  # Recursively call the method to restart the process
+                    if matched_name:
+                        self.log_list(f"Recognized: {matched_name}")
+                        self.send_command_to_esp(f"LCD_DISPLAY_ACCESS_GRANTED:{matched_name}")
+                        self.recognize_name.set(matched_name)
+                        if recipient_email:
+                            subject = "Smart Locker Access Granted"
+                            body = f"Access granted to {matched_name} on {datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')}."
+                            self.send_email_notification(recipient_email, subject, body)
+                            self.clear_values_and_restart()  # Restart all threads after access granted
+                        else:
+                            self.log_list(f"No email found for {matched_name}. Notification skipped.")
                     else:
-                        self.log_list(f"No email address found for {matched_name}. Notification skipped.")
+                        self.log_list("Unregistered face detected")
+                        self.send_command_to_esp("LCD_DISPLAY_ACCESS_DENIED")
+                        self.recognize_name.set("Unknown")
+            except Exception as e:
+                self.log_list(f"Error in live feed: {e}")
 
-                    # After recognizing a user, repeat the recognition process
-
-                else:
-                    self.log_list("Unregistered face detected")
-                    self.send_command_to_esp("LED_OFF")
-                    self.send_command_to_esp("LCD_DISPLAY_ACCESS_DENIED")
-                    self.recognize_name.set("Unknown")
-
+        self.live_feed_event.clear()
+        self.live_feed_thread_running = False
+        self.log_list("Live feed has ended.")
     def clear_values_and_restart(self):
         """Clear all relevant values and restart the recognition process."""
-        # Clear all relevant values (e.g., fingerprint ID, face recognition name, etc.)
         self.log_list("Clearing all values for the next recognition attempt.")
-        self.idmo = None  # Clear the fingerprint ID
-        self.recognize_name.set("")  # Clear the recognized name
-        self.face_recognition_result = None  # Clear face recognition result
-        self.send_command_to_esp("LED_OFF")  # Turn off LED to reset
-        self.send_command_to_esp("LCD_DISPLAY_WAITING")  # Optionally, display a waiting message on LCD
+        self.idmo = None
+        self.recognize_name.set("")
+        self.face_recognition_result = None
+        self.send_command_to_esp("LCD_DISPLAY_WAITING")
+        time.sleep(2)
+        self.live_feed_event.clear()
+        self.fingerprint_event.clear()
+        self.log_list("Restarting fingerprint verification...")
+        self.toggle_live_feed()
 
-        # Optionally, you can introduce a brief wait before starting the next recognition attempt
-        time.sleep(2)  # 2-second wait before starting the next recognition
+    def fingerprint_verification_loop(self):
+        self.idmo = None
+        while True:
+            if not self.live_feed_event.is_set() and not self.fingerprint_event.is_set():
+                # Start fresh
+                self.idmo = None
 
-        # Restart fingerprint verification
+                # Attempt fingerprint verification
+                idmo = self.verify_fingerprint()
+                if not idmo:
+                    self.log_list("Fingerprint verification failed. Retrying...")
+                    time.sleep(1)
+                    continue
+
+                self.log_list("Fingerprint verified, proceeding with face recognition.")
+                self.fingerprint_event.set()
+                self.live_feed_event.set()
+                self.log_list("Live feed started.")
+
+                # Spawn the live feed thread only once
+                if not self.live_feed_thread_running:
+                    self.live_feed_thread_running = True
+                    threading.Thread(target=self.start_live_feed_thread, daemon=True).start()
+
+                # Wait for face recognition to finish
+                while self.live_feed_event.is_set():
+                    time.sleep(1)
+
+                # Face recognition ended
+                self.log_list("Face recognition ended. Restarting fingerprint verification...")
+                self.fingerprint_event.clear()
+            else:
+                time.sleep(1)
 
     def toggle_live_feed(self):
+        """Starts the fingerprint verification process in a separate thread to prevent UI freezing."""
+        # If a thread is already running, don't start another
+        if self.fingerprint_thread_running:
+            self.log_list("Fingerprint verification thread already running. No new thread started.")
+            return
+
         if not self.live_feed_event.is_set():
-            # Step 1: Verify fingerprint first
-            idmo = self.verify_fingerprint()  # Ensure fingerprint is verified first
-            print(idmo)
-
-            if not idmo:  # If idmo is None, verification failed
-                self.log_list("Fingerprint verification failed. Retrying...")
-                time.sleep(1)  # Wait before retrying fingerprint verification
-                return  # Exit the method and do not start the live feed
-
-            # Step 2: If valid, proceed to face recognition
-            self.log_list("Fingerprint verified, proceeding with face recognition.")
-
-            self.live_feed_event.set()  # Start live feed
-            self.log_list("Live feed started.")
-            self.start_live_feed_thread()  # Start the live feed in a separate thread
-        else:
-            # Restart the live feed
-            self.log_list("Live feed is restarting...")
-            self.live_feed_event.clear()  # Clear the event (stop the current feed)
-            self.toggle_live_feed()
+            self.idmo = None
+            self.log_list("Starting fingerprint verification thread...")
+            self.fingerprint_thread_running = True
+            threading.Thread(target=self.fingerprint_verification_loop, daemon=True).start()
 
     def start_live_feed_thread(self):
-        live_feed_thread = threading.Thread(target=self.start_live_feed, daemon=True)
-        live_feed_thread.start()
+        """Start live feed in a new thread."""
+        threading.Thread(target=self.start_live_feed, daemon=True).start()
 
 
 if __name__ == "__main__":
