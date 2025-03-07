@@ -3,7 +3,7 @@ import requests
 import mysql.connector
 import json  # ✅ Added for safe JSON parsing
 
-ESP8266_URL = "http://192.168.100.229/command"  # Update if needed
+ESP8266_URL = "http://192.168.100.60/command"  # Update if needed
 
 app = Flask(__name__)
 
@@ -63,6 +63,8 @@ def send_command():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
 
 @app.route('/register_fingerprint', methods=['POST'])
 def register_fingerprint():
