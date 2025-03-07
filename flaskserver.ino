@@ -52,7 +52,7 @@ void sendToFlask(String jsonData) {
     WiFiClient client;
     HTTPClient http;
     
-    String serverURL = "http://192.168.1.58:5000/fingerprint_response";  // Flask endpoint for responses
+    String serverURL = "http://192.168.100.59:5000/fingerprint_response";  // Flask endpoint for responses
     http.begin(client, serverURL);
     http.addHeader("Content-Type", "application/json");
 
@@ -73,7 +73,7 @@ void sendToServer(String jsonData) {
     WiFiClient client;
     HTTPClient http;
 
-    String serverURL = "http://192.168.1.58:5000/sync_fingerprints";  // Replace with your Flask server IP
+    String serverURL = "http://192.168.100.59:5000/sync_fingerprints";  // Replace with your Flask server IP
     http.begin(client, serverURL);
     http.addHeader("Content-Type", "application/json");
 
