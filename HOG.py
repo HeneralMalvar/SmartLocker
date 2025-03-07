@@ -70,8 +70,8 @@ class SmartLocker:
         self.log_listbox.config(yscrollcommand=scrollbar_listbox.set)
         scrollbar_listbox.config(command=self.log_listbox.yview)
 
-        self.url = 'http://192.168.1.57/cam-hi.jpg'
-        self.ESP8266_IP = "192.168.1.53"
+        self.url = 'http://192.168.100.56/cam-hi.jpg'
+        self.ESP8266_IP = "192.168.100.60"
         self.ESP8266_PORT = 80
         self.ESP_URL = f"http://{self.ESP8266_IP}:{self.ESP8266_PORT}/command"
 
@@ -170,7 +170,7 @@ class SmartLocker:
             data = {"command": "stop_all"}
             if fingerprint_id:
                 data["fingerprint_id"] = fingerprint_id
-            response = requests.post("http://192.168.1.58:5000/send_command", json=data, timeout=10)
+            response = requests.post("http://192.168.100.59:5000/send_command", json=data, timeout=10)
             time.sleep(2)
             if response.status_code == 200:
                 self.log_list("Stop all command sent successfully.")
@@ -189,10 +189,10 @@ class SmartLocker:
                 if fingerprint_id:
                     data["fingerprint_id"] = fingerprint_id
                 try:
-                    response = requests.post("http://192.168.1.58:5000/send_command", json=data, timeout=10)
+                    response = requests.post("http://192.168.100.59:5000/send_command", json=data, timeout=10)
                     for _ in range(10):  # Try for ~10 seconds
                         time.sleep(1)
-                        responses = requests.get("http://192.168.1.58:5000/get_responses").json()
+                        responses = requests.get("http://192.168.100.59:5000/get_responses").json()
                         print(response)
                         self.idmo = responses.get("last_fingerprint_id")
                         if self.idmo:
