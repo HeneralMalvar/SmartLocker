@@ -3,7 +3,7 @@ import requests
 import mysql.connector
 import json  # ✅ Added for safe JSON parsing
 
-ESP8266_URL = "http://192.168.100.60/command"  # Update if needed
+ESP8266_URL = "http://192.168.1.101/command"  # Update if needed
 
 app = Flask(__name__)
 
@@ -22,6 +22,7 @@ fingerprint_id_global = None
 # 🔹 Helper function to communicate with ESP8266
 def send_command_to_esp(command, fingerprint_id=None):
     global fingerprint_id_global
+    fingerprint_id_global = None
 
     try:
         payload = {"command": command}
@@ -51,6 +52,8 @@ def send_command_to_esp(command, fingerprint_id=None):
 # ✅ General command handler
 @app.route('/send_command', methods=['POST'])
 def send_command():
+    global fingerprint_id_global
+    fingerprint_id_global = None
     try:
         data = request.json
         command = data.get("command", "")
@@ -93,10 +96,10 @@ def fingerprint_response():
         # Extract fingerprint_id if present
         fingerprint_id = data.get("fingerprint_id")
         if fingerprint_id is not None:
-            fingerprint_id_global = fingerprint_id  # Store in global variable
-            print(f"✅ Stored Fingerprint ID: {fingerprint_id_global}")  # Print it
+            fingerprint_id_global = fingerprint_id  # Store temporarily
+            print(f"✅ Stored Fingerprint ID: {fingerprint_id_global}")  # Debugging
 
-        return jsonify({"message": "Response received"}), 200
+        return jsonify({"message": "Response received"}), 200  # ✅ Don't reset immediately
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
