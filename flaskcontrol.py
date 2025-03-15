@@ -3,7 +3,7 @@ import requests
 import mysql.connector
 import json  # ✅ Added for safe JSON parsing
 
-ESP8266_URL = "http://192.168.1.101/command"  # Update if needed
+ESP8266_URL = "http://172.20.10.4/command"  # Update if needed
 
 app = Flask(__name__)
 
