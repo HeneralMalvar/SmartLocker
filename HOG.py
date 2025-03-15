@@ -89,8 +89,8 @@ class SmartLocker:
                                         bg="blue", fg="white", command=self.export_logs_to_csv)
         self.export_csv_button.place(x=900, y=620, width=200, height=40)
 
-        self.url = 'http://192.168.1.102/cam-hi.jpg'
-        self.ESP8266_IP = "192.168.1.101"
+        self.url = 'http://172.20.10.3/cam-hi.jpg'
+        self.ESP8266_IP = "172.20.10.4"
         self.ESP8266_PORT = 80
         self.ESP_URL = f"http://{self.ESP8266_IP}:{self.ESP8266_PORT}/command"
 
@@ -189,7 +189,7 @@ class SmartLocker:
             data = {"command": "stop_all"}
             if fingerprint_id:
                 data["fingerprint_id"] = fingerprint_id
-            response = requests.post("http://192.168.1.100:5000/send_command", json=data, timeout=10)
+            response = requests.post("http://172.20.10.5:5000/send_command", json=data, timeout=10)
             time.sleep(2)
             if response.status_code == 200:
                 self.log_list("Stop all command sent successfully.")
@@ -208,10 +208,10 @@ class SmartLocker:
                 if fingerprint_id:
                     data["fingerprint_id"] = fingerprint_id
                 try:
-                    response = requests.post("http://192.168.1.100:5000/send_command", json=data, timeout=10)
+                    response = requests.post("http://172.20.10.5:5000/send_command", json=data, timeout=10)
                     for _ in range(10):  # Try for ~10 seconds
                         time.sleep(1)
-                        responses = requests.get("http://192.168.1.100:5000/get_responses").json()
+                        responses = requests.get("http://172.20.10.5:5000/get_responses").json()
                         self.idmo = responses.get("last_fingerprint_id")
 
                         # Break if a new fingerprint is detected
