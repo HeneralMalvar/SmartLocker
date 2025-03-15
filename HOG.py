@@ -27,6 +27,7 @@ from tkinter import filedialog
 import dlib
 from imutils import face_utils
 from scipy.spatial import distance
+import serial
 
 for port in ports:
     print(port.device)
@@ -245,11 +246,13 @@ class SmartLocker:
             return
 
         detector = dlib.get_frontal_face_detector()
-        predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")  # Download from dlib
+        predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")  # Download from
+        print(predictor)
 
-        EAR_THRESHOLD = 0.2  # Below this value, the eyes are considered closed
-        BLINK_CONSEC_FRAMES = 3  # Number of frames where blink should occur
+        EAR_THRESHOLD = 0.3  # Below this value, the eyes are considered closed
+        BLINK_CONSEC_FRAMES = 2  # Number of frames where blink should occur
         FRAME_COUNT = 0
+        BLINK_COUNT = 0
 
         while self.live_feed_event.is_set():
             try:
@@ -288,10 +291,12 @@ class SmartLocker:
                         else:
                             if FRAME_COUNT >= BLINK_CONSEC_FRAMES:
                                 self.log_list("Blink detected! Face is real.")
-                            else:
-                                self.log_list("No blink detected. Possible spoof attempt.")
-                                continue  # Skip this face recognition attempt
-                            FRAME_COUNT = 0  # Reset blink counter
+                                BLINK_COUNT += 1  # Increase blink count
+                                self.log_list(f"Blink {BLINK_COUNT} detected")
+                            FRAME_COUNT = 0  # Reset counter
+                    if BLINK_COUNT < 1:  # Require at least 1 blinks to continue
+                        self.log_list("Liveness check failed. No sufficient blinks detected.")
+                        continue  # Skip recognition if no blinks are detected
 
                     # Face Recognition after confirming liveness
                     for name, db_encoding, email, contact in encodings:
@@ -308,6 +313,12 @@ class SmartLocker:
                         self.send_command_to_esp(f"LCD_DISPLAY_ACCESS_GRANTED:{matched_name}")
                         self.recognize_name.set(matched_name)
 
+                        if recipient_contact:
+                            sms_message = f"Smart Locker Access Granted to {matched_name} on {datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')}."
+                            self.send_sms_notification(recipient_contact, sms_message)
+
+                        else:
+                            self.log_list("No contact number found for the user")
                         if recipient_email:
                             subject = "Smart Locker Access Granted"
                             body = f"Access granted to {matched_name} on {datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')}."
@@ -468,6 +479,16 @@ class SmartLocker:
         except Exception as e:
             self.log_list(f"Error: {e}")
 
+    def send_sms_notification(self,phone_number,message):
+        try:
+            arduino_serial = serial.Serial("COM4",9600,timeout=1)
+            time.sleep(2)
+            sms_command = f"{phone_number},{message}\n"
+            arduino_serial.write(sms_command.encode())
+            self.log_list(f"SMS notification sent to {phone_number}")
+            arduino_serial.close()
+        except Exception as e:
+            self.log_list(f"Failed to send SMS: {e}")
 
 if __name__ == "__main__":
     root = Tk()
