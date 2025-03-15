@@ -10,7 +10,7 @@ from tkinter import Toplevel, Label, Button, Entry, StringVar, Listbox,messagebo
 from PIL import Image, ImageTk
 import time
 
-FLASK_SERVER_URL = "http://192.168.100.59:5000"  # Flask server URL
+FLASK_SERVER_URL = "http://172.20.10.5:5000"  # Flask server URL
 
 class RegisterFace:
     def __init__(self, parent):
