@@ -11,7 +11,8 @@ import time
 import datetime
 import requests
 from flask import request
-
+import http.client
+import json
 from register import RegisterFace
 import cv2
 from testreg import RegisterFaces
@@ -41,7 +42,7 @@ class SmartLocker:
         self.root.geometry("1360x760+0+0")
         self.root.title("Smart Locker V1.0")
         self.root.resizable(False, False)
-        base_dir = r"C:\Users\Charles\PycharmProjects\camServer\gui"
+        base_dir = r"C:\Users\ASUS\PycharmProjects\Smartlocker\gui"
 
         bg_template = Image.open(os.path.join(base_dir, "bg-template.jpg")).resize(
             (1360, 760), Image.Resampling.LANCZOS
@@ -89,8 +90,8 @@ class SmartLocker:
                                         bg="blue", fg="white", command=self.export_logs_to_csv)
         self.export_csv_button.place(x=900, y=620, width=200, height=40)
 
-        self.url = 'http://172.20.10.3/cam-hi.jpg'
-        self.ESP8266_IP = "172.20.10.4"
+        self.url = 'http://192.168.1.102/cam-hi.jpg'
+        self.ESP8266_IP = "192.168.1.101"
         self.ESP8266_PORT = 80
         self.ESP_URL = f"http://{self.ESP8266_IP}:{self.ESP8266_PORT}/command"
 
@@ -189,7 +190,7 @@ class SmartLocker:
             data = {"command": "stop_all"}
             if fingerprint_id:
                 data["fingerprint_id"] = fingerprint_id
-            response = requests.post("http://172.20.10.5:5000/send_command", json=data, timeout=10)
+            response = requests.post("http://192.168.1.100:5000/send_command", json=data, timeout=10)
             time.sleep(2)
             if response.status_code == 200:
                 self.log_list("Stop all command sent successfully.")
@@ -208,10 +209,10 @@ class SmartLocker:
                 if fingerprint_id:
                     data["fingerprint_id"] = fingerprint_id
                 try:
-                    response = requests.post("http://172.20.10.5:5000/send_command", json=data, timeout=10)
+                    response = requests.post("http://192.168.1.100:5000/send_command", json=data, timeout=10)
                     for _ in range(10):  # Try for ~10 seconds
                         time.sleep(1)
-                        responses = requests.get("http://172.20.10.5:5000/get_responses").json()
+                        responses = requests.get("http://192.168.1.100:5000/get_responses").json()
                         self.idmo = responses.get("last_fingerprint_id")
 
                         # Break if a new fingerprint is detected
@@ -229,14 +230,6 @@ class SmartLocker:
             self.log_list(f"Error during fingerprint verification: {e}")
             return None
 
-    def eye_aspect_ratio(self, eye):
-        """Calculate the Eye Aspect Ratio (EAR) to detect blinks."""
-        A = distance.euclidean(eye[1], eye[5])
-        B = distance.euclidean(eye[2], eye[4])
-        C = distance.euclidean(eye[0], eye[3])
-        ear = (A + B) / (2.0 * C)
-        return ear
-
     def start_live_feed(self):
         """Captures live camera feed and performs face recognition with liveness detection."""
         encodings = self.load_from_db()
@@ -251,8 +244,8 @@ class SmartLocker:
 
         EAR_THRESHOLD = 0.3  # Below this value, the eyes are considered closed
         BLINK_CONSEC_FRAMES = 2  # Number of frames where blink should occur
-        FRAME_COUNT = 0
-        BLINK_COUNT = 0
+        self.FRAME_COUNT = 0
+        self.BLINK_COUNT = 0
 
         while self.live_feed_event.is_set():
             try:
@@ -274,6 +267,8 @@ class SmartLocker:
 
                 for face, encoding in zip(face_locations, face_encodings):
                     matched_name = None
+                    # self.BLINK_COUNT=0
+                    # self.FRAME_COUNT =0
 
                     # Perform liveness detection (Blink detection)
                     for d_face in dlib_faces:
@@ -287,21 +282,21 @@ class SmartLocker:
                         ear = (left_ear + right_ear) / 2.0
 
                         if ear < EAR_THRESHOLD:
-                            FRAME_COUNT += 1
+                            self.FRAME_COUNT += 1
                         else:
-                            if FRAME_COUNT >= BLINK_CONSEC_FRAMES:
+                            if self.FRAME_COUNT >= BLINK_CONSEC_FRAMES:
                                 self.log_list("Blink detected! Face is real.")
-                                BLINK_COUNT += 1  # Increase blink count
-                                self.log_list(f"Blink {BLINK_COUNT} detected")
-                            FRAME_COUNT = 0  # Reset counter
-                    if BLINK_COUNT < 1:  # Require at least 1 blinks to continue
+                                self.BLINK_COUNT += 1  # Increase blink count
+                                self.log_list(f"Blink {self.BLINK_COUNT} detected")
+                            self.FRAME_COUNT = 0  # Reset counter
+                    if self.BLINK_COUNT < 1 :  # Require at least 2 blinks to continue
                         self.log_list("Liveness check failed. No sufficient blinks detected.")
                         continue  # Skip recognition if no blinks are detected
 
                     # Face Recognition after confirming liveness
                     for name, db_encoding, email, contact in encodings:
                         face_distance = face_recognition.face_distance([db_encoding], encoding)
-                        if face_distance[0] < 0.4:
+                        if face_distance[0] < 0.37:
                             matched_name = name
                             recipient_email = email
                             recipient_contact = contact
@@ -313,23 +308,29 @@ class SmartLocker:
                         self.send_command_to_esp(f"LCD_DISPLAY_ACCESS_GRANTED:{matched_name}")
                         self.recognize_name.set(matched_name)
 
+                        if recipient_email:
+                            subject = "Smart Locker Access Granted"
+                            body = f"Access granted to {matched_name} on {datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')}."
+                            self.send_email_notification(recipient_email, subject, body)
+                            self.BLINK_COUNT=0
+                            self.FRAME_COUNT =0
+                            self.clear_values_and_restart()
+                        else:
+                            self.log_list(f"No email found for {matched_name}. Notification skipped.")
+
                         if recipient_contact:
                             sms_message = f"Smart Locker Access Granted to {matched_name} on {datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')}."
                             self.send_sms_notification(recipient_contact, sms_message)
 
                         else:
                             self.log_list("No contact number found for the user")
-                        if recipient_email:
-                            subject = "Smart Locker Access Granted"
-                            body = f"Access granted to {matched_name} on {datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')}."
-                            self.send_email_notification(recipient_email, subject, body)
-                            self.clear_values_and_restart()
-                        else:
-                            self.log_list(f"No email found for {matched_name}. Notification skipped.")
+
                     else:
                         self.log_list("Unregistered face detected")
                         self.send_command_to_esp("LCD_DISPLAY_ACCESS_DENIED")
                         self.recognize_name.set("Unknown")
+                        self.BLINK_COUNT=0
+                        self.FRAME_COUNT =0
 
             except Exception as e:
                 self.log_list(f"Error in live feed: {e}")
@@ -340,15 +341,24 @@ class SmartLocker:
     def clear_values_and_restart(self):
         """Clear all relevant values and restart the recognition process."""
         self.log_list("Clearing all values for the next recognition attempt.")
+        cv2.destroyAllWindows()
         self.idmo = None
         self.recognize_name.set("")
         self.face_recognition_result = None
-        self.send_command_to_esp("LCD_DISPLAY_WAITING")
+        #self.send_command_to_esp("LCD_DISPLAY_WAITING")
         time.sleep(2)
         self.live_feed_event.clear()
         self.fingerprint_event.clear()
         self.log_list("Restarting fingerprint verification...")
         self.toggle_live_feed()
+
+    def eye_aspect_ratio(self, eye):
+        """Calculate the Eye Aspect Ratio (EAR) to detect blinks."""
+        A = distance.euclidean(eye[1], eye[5])
+        B = distance.euclidean(eye[2], eye[4])
+        C = distance.euclidean(eye[0], eye[3])
+        ear = (A + B) / (2.0 * C)
+        return ear
 
     def fingerprint_verification_loop(self):
         while True:
@@ -479,16 +489,28 @@ class SmartLocker:
         except Exception as e:
             self.log_list(f"Error: {e}")
 
-    def send_sms_notification(self,phone_number,message):
-        try:
-            arduino_serial = serial.Serial("COM4",9600,timeout=1)
-            time.sleep(2)
-            sms_command = f"{phone_number},{message}\n"
-            arduino_serial.write(sms_command.encode())
-            self.log_list(f"SMS notification sent to {phone_number}")
-            arduino_serial.close()
-        except Exception as e:
-            self.log_list(f"Failed to send SMS: {e}")
+    def send_sms_notification(self, phone_number, message):
+        conn = http.client.HTTPSConnection("kq58xx.api.infobip.com")
+        payload = json.dumps({
+            "messages": [
+                {
+                    "destinations": [{"to": phone_number}],  # Dynamic phone number
+                    "from": "ServiceSMS",
+                    "text": message  # Dynamic message
+                }
+            ]
+        })
+        headers = {
+            'Authorization': 'App fa354cd7cdaac3221ddae8f1501b1aa8-c27c1768-aa68-4371-8443-599788e5d588',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        }
+        conn.request("POST", "/sms/2/text/advanced", payload, headers)
+        res = conn.getresponse()
+        data = res.read()
+        print(data.decode("utf-8"))
+    def release_camera(self):
+        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     root = Tk()
