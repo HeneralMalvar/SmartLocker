@@ -1,0 +1,111 @@
+def start_live_feed(self):
+    """Captures live camera feed and performs face recognition with liveness detection."""
+    db_records = self.load_from_db()
+
+    if not self.check_url_availability(self.url):
+        self.log_list("Error: Unable to connect to the camera feed.")
+        return
+
+    # Separate names and encodings for faster comparison
+    known_names = []
+    known_encodings = []
+    known_emails = {}
+    known_contacts = {}
+    for name, encoding, email, contact in db_records:
+        known_names.append(name)
+        known_encodings.append(encoding)
+        known_emails[name] = email
+        known_contacts[name] = contact
+
+    detector = dlib.get_frontal_face_detector()
+    predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
+
+    EAR_THRESHOLD = 0.3
+    BLINK_CONSEC_FRAMES = 2
+    FRAME_COUNT = 0
+    BLINK_COUNT = 0
+
+    while self.live_feed_event.is_set():
+        try:
+            img_response = urllib.request.urlopen(self.url, timeout=5)
+            img_np_array = np.array(bytearray(img_response.read()), dtype=np.uint8)
+            frame = cv2.imdecode(img_np_array, cv2.IMREAD_COLOR)
+            if frame is None:
+                self.log_list("Failed to fetch image. Retrying...")
+                continue
+
+            frame_resized = cv2.resize(frame, (640, 480))
+            gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
+            rgb_frame = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+
+            face_locations = face_recognition.face_locations(rgb_frame)
+            face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+
+            dlib_faces = detector(gray)
+
+            for face_location, face_encoding in zip(face_locations, face_encodings):
+                matched_name = None
+
+                # Blink detection using dlib
+                for d_face in dlib_faces:
+                    shape = predictor(gray, d_face)
+                    shape = face_utils.shape_to_np(shape)
+
+                    left_eye = shape[36:42]
+                    right_eye = shape[42:48]
+                    left_ear = self.eye_aspect_ratio(left_eye)
+                    right_ear = self.eye_aspect_ratio(right_eye)
+                    ear = (left_ear + right_ear) / 2.0
+
+                    if ear < EAR_THRESHOLD:
+                        FRAME_COUNT += 1
+                    else:
+                        if FRAME_COUNT >= BLINK_CONSEC_FRAMES:
+                            BLINK_COUNT += 1
+                            self.log_list("Blink detected! Face is real.")
+                        FRAME_COUNT = 0
+
+                if BLINK_COUNT < 1:
+                    self.log_list("Liveness check failed. No sufficient blinks detected.")
+                    continue
+
+                matches = face_recognition.compare_faces(known_encodings, face_encoding, tolerance=0.4)
+                face_distances = face_recognition.face_distance(known_encodings, face_encoding)
+
+                if True in matches:
+                    best_match_index = np.argmin(face_distances)
+                    matched_name = known_names[best_match_index]
+
+                if matched_name:
+                    self.log_list(f"Recognized: {matched_name}")
+                    self.update_access_log(matched_name, "Granted")
+                    self.send_command_to_esp(f"LCD_DISPLAY_ACCESS_GRANTED:{matched_name}")
+                    self.recognize_name.set(matched_name)
+
+                    email = known_emails.get(matched_name)
+                    contact = known_contacts.get(matched_name)
+
+                    if contact:
+                        sms_message = f"Smart Locker Access Granted to {matched_name} on {datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')}."
+                        self.send_sms_notification(contact, sms_message)
+
+                    if email:
+                        subject = "Smart Locker Access Granted"
+                        body = f"Access granted to {matched_name} on {datetime.datetime.now().strftime('%d-%m-%Y %H:%M:%S')}."
+                        self.send_email_notification(email, subject, body)
+                    else:
+                        self.log_list(f"No email found for {matched_name}. Notification skipped.")
+
+                    self.clear_values_and_restart()
+                    break  # Exit after recognizing one face
+                else:
+                    self.log_list("Unregistered face detected")
+                    self.send_command_to_esp("LCD_DISPLAY_ACCESS_DENIED")
+                    self.recognize_name.set("Unknown")
+
+        except Exception as e:
+            self.log_list(f"Error in live feed: {e}")
+
+    self.live_feed_event.clear()
+    self.live_feed_thread_running = False
+    self.log_list("Live feed has ended.")
